@@ -1,0 +1,10 @@
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+.env*.local
+.env
+# Base de données locale et vrais flags : ne jamais versionner
+data/*.db
+data/*.db-*
+data/challenges.json

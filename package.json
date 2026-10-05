@@ -1,0 +1,28 @@
+{
+  "name": "plateforme-ctf-esatic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "tsc --noEmit",
+    "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --experimental-strip-types --no-warnings=ExperimentalWarning scripts/seed.ts"
+  },
+  "dependencies": {
+    "@phosphor-icons/web": "^2.1.1",
+    "better-sqlite3": "^13.0.3",
+    "next": "^16.3.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}

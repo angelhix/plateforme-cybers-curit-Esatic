@@ -1,5 +1,5 @@
 import 'server-only';
-import { db } from './db';
+import { prisma } from './prisma';
 import { CATS, LEVELS, banner, courseForCategory, levelLabel, type CatCode, type Level } from './catalog';
 
 export type Status = 'done' | 'progress' | 'todo';
@@ -29,20 +29,53 @@ function decorate(r: Row) {
   };
 }
 
-const CH_SELECT = `
-  SELECT c.id, c.title, c.category, c.level, c.points, c.description, c.goal, c.cmd, c.output,
-    (SELECT COUNT(*) FROM solves s WHERE s.challenge_id = c.id) AS solves,
-    EXISTS (SELECT 1 FROM solves s WHERE s.challenge_id = c.id AND s.user_id = @uid) AS solved,
-    EXISTS (SELECT 1 FROM attempts a WHERE a.challenge_id = c.id AND a.user_id = @uid) AS tried
-  FROM challenges c WHERE c.published = 1`;
-
-export function listChallenges(uid: number | null) {
-  return (db().prepare(CH_SELECT + ' ORDER BY c.id').all({ uid: uid ?? -1 }) as Row[]).map(decorate);
+function compareBinary(left: string, right: string) {
+  return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
 }
 
-export function getChallenge(id: string, uid: number | null) {
-  const r = db().prepare(CH_SELECT + ' AND c.id = @id').get({ uid: uid ?? -1, id }) as Row | undefined;
-  return r ? decorate(r) : null;
+function challengeSelect(uid: number) {
+  return {
+    id: true,
+    title: true,
+    categoryCode: true,
+    level: true,
+    points: true,
+    description: true,
+    goal: true,
+    command: true,
+    output: true,
+    _count: { select: { solves: true } },
+    solves: { where: { userId: uid }, select: { userId: true } },
+    attempts: { where: { userId: uid }, select: { id: true } },
+  } as const;
+}
+
+function challengeRow(r: {
+  id: string; title: string; categoryCode: string; level: number; points: number;
+  description: string; goal: string; command: string; output: string;
+  _count: { solves: number }; solves: { userId: number }[]; attempts: { id: number }[];
+}): Row {
+  return {
+    id: r.id, title: r.title, category: r.categoryCode as CatCode, level: r.level as Level,
+    points: r.points, description: r.description, goal: r.goal, cmd: r.command, output: r.output,
+    solves: r._count.solves, solved: r.solves.length ? 1 : 0, tried: r.attempts.length ? 1 : 0,
+  };
+}
+
+export async function listChallenges(uid: number | null): Promise<Challenge[]> {
+  const rows = await prisma.challenge.findMany({
+    where: { published: true },
+    select: challengeSelect(uid ?? -1),
+  });
+  return rows.map(challengeRow).sort((a, b) => compareBinary(a.id, b.id)).map(decorate);
+}
+
+export async function getChallenge(id: string, uid: number | null): Promise<Challenge | null> {
+  const row = await prisma.challenge.findFirst({
+    where: { id, published: true },
+    select: challengeSelect(uid ?? -1),
+  });
+  return row ? decorate(challengeRow(row)) : null;
 }
 
 export type BoardEntry = {
@@ -51,30 +84,53 @@ export type BoardEntry = {
 };
 
 /** Classement général : points décroissants, puis le premier arrivé à ce score. */
-export function leaderboard(): BoardEntry[] {
-  const rows = db().prepare(`
-    SELECT u.id, u.handle, u.initials, u.level,
-      COALESCE(SUM(c.points), 0) AS pts, COUNT(c.id) AS solved, MAX(s.solved_at) AS last
-    FROM users u
-    LEFT JOIN solves s ON s.user_id = u.id
-    LEFT JOIN challenges c ON c.id = s.challenge_id AND c.published = 1
-    GROUP BY u.id
-    ORDER BY pts DESC, (last IS NULL), last ASC, u.handle ASC`).all() as (Omit<BoardEntry, 'rank' | 'lvName' | 'medal'> & { last: number | null })[];
+export async function leaderboard(): Promise<BoardEntry[]> {
+  const users = await prisma.user.findMany({
+    select: {
+      id: true,
+      handle: true,
+      initials: true,
+      level: true,
+      solves: { select: { solvedAt: true, challenge: { select: { points: true, published: true } } } },
+    },
+  });
+  const rows = users.map(user => {
+    const publishedSolves = user.solves.filter(solve => solve.challenge.published);
+    const last = publishedSolves.reduce<Date | null>((latest, solve) =>
+      latest === null || solve.solvedAt > latest ? solve.solvedAt : latest, null);
+    return {
+      id: user.id,
+      handle: user.handle,
+      initials: user.initials,
+      level: user.level as Level,
+      pts: publishedSolves.reduce((total, solve) => total + solve.challenge.points, 0),
+      solved: publishedSolves.length,
+      last,
+    };
+  });
+  rows.sort((a, b) => b.pts - a.pts
+    || (a.last === null ? (b.last === null ? 0 : 1) : b.last === null ? -1 : a.last.getTime() - b.last.getTime())
+    || compareBinary(a.handle, b.handle));
   const medals = ['#F2C94C', '#C9D3DC', '#D08B5B'];
   return rows.map((r, i) => ({ id: r.id, handle: r.handle, initials: r.initials, level: r.level, pts: r.pts, solved: r.solved,
     rank: i + 1, lvName: LEVELS[r.level].name, medal: medals[i] ?? null }));
 }
 
-export function userPoints(uid: number) {
-  const r = db().prepare(`SELECT COALESCE(SUM(c.points), 0) AS pts FROM solves s JOIN challenges c ON c.id = s.challenge_id
-    WHERE s.user_id = ? AND c.published = 1`).get(uid) as { pts: number };
-  return r.pts;
+export async function userPoints(uid: number): Promise<number> {
+  const solves = await prisma.solve.findMany({
+    where: { userId: uid, challenge: { is: { published: true } } },
+    select: { challenge: { select: { points: true } } },
+  });
+  return solves.reduce((total, solve) => total + solve.challenge.points, 0);
 }
 
 /** Défis résolus par un utilisateur, du plus récent au plus ancien. */
-export function solvedBy(uid: number) {
-  const ids = db().prepare(`SELECT s.challenge_id AS id FROM solves s JOIN challenges c ON c.id = s.challenge_id
-    WHERE s.user_id = ? AND c.published = 1 ORDER BY s.solved_at DESC, s.challenge_id DESC`).all(uid) as { id: string }[];
-  const all = new Map(listChallenges(uid).map(c => [c.id, c]));
-  return ids.map(r => all.get(r.id)!).filter(Boolean);
+export async function solvedBy(uid: number): Promise<Challenge[]> {
+  const solves = await prisma.solve.findMany({
+    where: { userId: uid, challenge: { is: { published: true } } },
+    select: { challengeId: true, solvedAt: true },
+  });
+  solves.sort((a, b) => b.solvedAt.getTime() - a.solvedAt.getTime() || compareBinary(b.challengeId, a.challengeId));
+  const all = new Map((await listChallenges(uid)).map(challenge => [challenge.id, challenge]));
+  return solves.map(solve => all.get(solve.challengeId)!).filter(Boolean);
 }

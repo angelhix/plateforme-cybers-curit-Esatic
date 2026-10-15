@@ -49,11 +49,20 @@ export type DocKind = 'Preparatoire' | 'Pratique';
 
 const DOCS_BASE = (process.env.NEXT_PUBLIC_DOCS_BASE ?? '/docs').replace(/\/$/, '');
 
-/** Lien vers un document de cours, ex. `/docs/Niveau 2/Partie 2/Séance 2/N2-P2-S2 Pratique Nmap.pdf`. */
-export function docHref(l: Level, k: number, kind: DocKind, ext: 'pdf' | 'dc.html') {
+export function legacyDocumentStorageKey(l: Level, k: number, kind: DocKind, ext: 'pdf' | 'dc.html') {
   const p = Math.floor(k / 5) + 1, s = (k % 5) + 1;
   const file = `${l === 2 ? 'N2-' : ''}P${p}-S${s} ${kind} ${FILE_NAMES[l]![k]}.${ext}`;
-  return DOCS_BASE + '/' + encodeURI(`Niveau ${l}/Partie ${p}/Séance ${s}/${file}`);
+  return `Niveau ${l}/Partie ${p}/Séance ${s}/${file}`;
+}
+
+export function documentHref(storageKey: string) {
+  const relativeKey = storageKey.replace(/^\/+/, '').replace(/^docs\//, '');
+  return `${DOCS_BASE}/${relativeKey.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+/** Lien vers un document de cours, ex. `/docs/Niveau 2/Partie 2/Séance 2/N2-P2-S2 Pratique Nmap.pdf`. */
+export function docHref(l: Level, k: number, kind: DocKind, ext: 'pdf' | 'dc.html') {
+  return DOCS_BASE + '/' + encodeURI(legacyDocumentStorageKey(l, k, kind, ext));
 }
 
 export type Course = {

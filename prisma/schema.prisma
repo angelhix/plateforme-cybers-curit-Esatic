@@ -1,0 +1,210 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  PLAYER
+  ADMIN
+}
+
+enum CourseDocumentKind {
+  PREPARATORY
+  PRACTICAL
+}
+
+enum CourseDocumentFormat {
+  PDF
+  HTML
+}
+
+model User {
+  id           Int           @id @default(autoincrement())
+  handle       String        @unique @db.VarChar(20)
+  initials     String        @db.VarChar(2)
+  /// Existing application levels are 1, 2, and 3.
+  level        Int           @default(1)
+  role         UserRole      @default(PLAYER)
+  passwordHash String        @map("password_hash")
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  sessions     Session[]
+  solves       Solve[]
+  attempts     FlagAttempt[]
+  courseStepProgress CourseStepProgress[]
+
+  @@map("users")
+}
+
+model Session {
+  tokenHash String   @id @map("token_hash")
+  userId    Int      @map("user_id")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+model Category {
+  code       String      @id @db.VarChar(3)
+  name       String
+  icon       String
+  color      String      @db.VarChar(7)
+  sortOrder  Int         @default(0) @map("sort_order")
+  courses    Course[]
+  challenges Challenge[]
+
+  @@map("categories")
+}
+
+model Course {
+  id           String           @id @default(cuid())
+  level        Int
+  position     Int
+  title        String
+  description  String           @default("")
+  categoryCode String           @map("category_code") @db.VarChar(3)
+  published    Boolean          @default(false)
+  category     Category         @relation(fields: [categoryCode], references: [code])
+  documents    CourseDocument[]
+  challenges   Challenge[]
+  steps        CourseStep[]
+
+  @@unique([level, position])
+  @@index([categoryCode, level])
+  @@map("courses")
+}
+
+model CourseDocument {
+  id         String               @id @default(cuid())
+  courseId   String               @map("course_id")
+  kind       CourseDocumentKind
+  format     CourseDocumentFormat
+  title      String
+  storageKey String               @map("storage_key")
+  sortOrder  Int                  @default(0) @map("sort_order")
+  course     Course               @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, sortOrder])
+  @@map("course_documents")
+}
+
+enum CourseStepType {
+  ARTICLE
+  QUIZ
+  CHALLENGE
+}
+
+model CourseStep {
+  id          String          @id @default(cuid())
+  courseId    String          @map("course_id")
+  type        CourseStepType
+  title       String
+  description String          @default("")
+  sortOrder   Int             @map("sort_order")
+  articleBody String?         @map("article_body") @db.Text
+  challengeId String?         @unique @map("challenge_id")
+  course      Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  challenge   Challenge?      @relation("CourseStepChallenge", fields: [challengeId], references: [id], onDelete: SetNull)
+  questions   CourseStepQuizQuestion[]
+  progress    CourseStepProgress[]
+
+  @@unique([courseId, sortOrder])
+  @@index([courseId, type])
+  @@map("course_steps")
+}
+
+model CourseStepQuizQuestion {
+  id               String                 @id @default(cuid())
+  stepId           String                 @map("step_id")
+  prompt           String
+  sortOrder        Int                    @map("sort_order")
+  points           Int                    @default(1)
+  correctOptionId  String?                @unique @map("correct_option_id")
+  step             CourseStep             @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  options          CourseStepQuizOption[]
+  correctOption    CourseStepQuizOption?  @relation("CorrectOption", fields: [correctOptionId], references: [id], onDelete: SetNull)
+
+  @@unique([stepId, sortOrder])
+  @@index([stepId])
+  @@map("course_step_quiz_questions")
+}
+
+model CourseStepQuizOption {
+  id         String                   @id @default(cuid())
+  questionId String                   @map("question_id")
+  text       String
+  sortOrder  Int                      @map("sort_order")
+  question   CourseStepQuizQuestion   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  correctFor CourseStepQuizQuestion?  @relation("CorrectOption")
+
+  @@unique([questionId, sortOrder])
+  @@index([questionId])
+  @@map("course_step_quiz_options")
+}
+
+model CourseStepProgress {
+  userId      Int        @map("user_id")
+  stepId      String     @map("step_id")
+  completedAt DateTime   @map("completed_at") @db.Timestamptz(3)
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  step        CourseStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@id([userId, stepId])
+  @@index([stepId, completedAt])
+  @@map("course_step_progress")
+}
+
+model Challenge {
+  id           String        @id
+  title        String
+  categoryCode String        @map("category_code") @db.VarChar(3)
+  level        Int
+  points       Int
+  description  String
+  goal         String
+  command      String        @map("cmd")
+  output       String
+  flagHash     String        @map("flag_hash")
+  published    Boolean       @default(true)
+  category     Category      @relation(fields: [categoryCode], references: [code])
+  courseId     String?       @map("course_id")
+  course       Course?       @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  courseStep   CourseStep?   @relation("CourseStepChallenge")
+  solves       Solve[]
+  attempts     FlagAttempt[]
+
+  @@index([published, level, categoryCode])
+  @@index([courseId])
+  @@map("challenges")
+}
+
+model Solve {
+  userId      Int       @map("user_id")
+  challengeId String    @map("challenge_id")
+  solvedAt    DateTime  @map("solved_at") @db.Timestamptz(3)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, challengeId])
+  @@index([challengeId, solvedAt])
+  @@map("solves")
+}
+
+model FlagAttempt {
+  id          Int       @id @default(autoincrement())
+  userId      Int       @map("user_id")
+  challengeId String    @map("challenge_id")
+  correct     Boolean
+  createdAt   DateTime  @map("created_at") @db.Timestamptz(3)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([challengeId, createdAt])
+  @@map("attempts")
+}

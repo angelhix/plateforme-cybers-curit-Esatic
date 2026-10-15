@@ -8,14 +8,14 @@ import FlagForm from '@/components/FlagForm';
 type Params = Promise<{ id: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
-  const ch = getChallenge((await params).id, null);
+  const ch = await getChallenge((await params).id, null);
   return { title: ch ? `${ch.title} · Défis · Plateforme CTF ESATIC` : 'Défi introuvable' };
 }
 
 export default async function ChallengePage({ params }: { params: Params }) {
   const { id } = await params;
   const me = await getCurrentUser();
-  const ch = getChallenge(id, me?.id ?? null);
+  const ch = await getChallenge(id, me?.id ?? null);
   if (!ch) notFound();
 
   return (

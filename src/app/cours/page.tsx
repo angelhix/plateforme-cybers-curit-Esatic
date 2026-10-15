@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { Metadata } from 'next';
 import { getCurrentUser } from '@/lib/auth';
 import { CATS, CAT_CODES, LEVELS, LEVEL_IDS, banner, docHref, getCourse, isLevel, levelAvailable, type Level } from '@/lib/catalog';
+import { prisma } from '@/lib/prisma';
 
 export const metadata: Metadata = { title: 'Cours · Plateforme CTF ESATIC' };
 
@@ -10,7 +11,61 @@ export default async function CoursesPage({ searchParams }: { searchParams: Prom
   const me = await getCurrentUser();
   const n = Number(niveau);
   const lvl: Level = isLevel(n) ? n : (me?.level ?? 1);
-  const avail = levelAvailable(lvl);
+  const databaseCourses = await prisma.course.findMany({
+    where: { level: lvl, published: true },
+    orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true,
+      position: true,
+      title: true,
+      category: { select: { code: true, icon: true, color: true } },
+      documents: {
+        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+        select: { title: true, kind: true, format: true, storageKey: true },
+      },
+    },
+  });
+  const listedCourses: {
+    id: string;
+    position: number;
+    title: string;
+    categoryCode: string;
+    category: { icon: string; color: string };
+    documentCount: number;
+    documentHref: string | null;
+    documentTitle: string | null;
+  }[] = databaseCourses.map(course => {
+    const document = course.documents.find(item => item.kind === 'PREPARATORY' && item.format === 'PDF') ?? course.documents[0];
+    return {
+      id: course.id,
+      position: course.position,
+      title: course.title,
+      categoryCode: course.category.code,
+      category: course.category,
+      documentCount: course.documents.length,
+      documentHref: document ? `/${document.storageKey.split('/').map(encodeURIComponent).join('/')}` : null,
+      documentTitle: document?.title ?? null,
+    };
+  });
+  const databasePositions = new Set(databaseCourses.map(course => course.position));
+  if (databaseCourses.length) {
+    for (let index = 0; index < 20; index++) {
+      if (databasePositions.has(index + 1)) continue;
+      const course = getCourse(lvl, index);
+      if (!course) continue;
+      listedCourses.push({
+        id: `catalog-${lvl}-${index}`,
+        position: index + 1,
+        title: course.title,
+        categoryCode: course.catCode,
+        category: { icon: course.catIcon, color: course.catColor },
+        documentCount: 2,
+        documentHref: docHref(lvl, course.k, 'Preparatoire', 'pdf'),
+        documentTitle: `Document préparatoire · ${course.title}`,
+      });
+    }
+  }
+  const avail = levelAvailable(lvl) || listedCourses.length > 0;
 
   return (
     <section className="stack" style={{ gap: 32 }}>
@@ -29,6 +84,49 @@ export default async function CoursesPage({ searchParams }: { searchParams: Prom
       </div>
 
       {avail ? (
+        listedCourses.length ? (
+          <div className="stack" style={{ gap: 40 }}>
+            {CAT_CODES.map((code, i) => {
+              const categoryCourses = listedCourses.filter(course => course.categoryCode === code);
+              if (!categoryCourses.length) return null;
+              const category = CATS[code];
+              return (
+                <div key={code} className="stack" style={{ gap: 16 }}>
+                  <div className="row" style={{ gap: 12 }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 8, background: category.color + '1F', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <i className={`ph ${category.icon}`} style={{ fontSize: 22, color: category.color }} />
+                    </div>
+                    <div className="stack">
+                      <span className="mono" style={{ fontSize: 11, letterSpacing: '.1em', color: category.color }}>PARTIE {i + 1} · {code}</span>
+                      <span className="display" style={{ fontSize: 20, fontWeight: 600 }}>{category.name}</span>
+                    </div>
+                  </div>
+                  <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: 16 }}>
+                    {categoryCourses.map(course => {
+                      const number = String(course.position).padStart(2, '0');
+                      const href = `/cours/${lvl}/${number}`;
+                      return (
+                        <div key={course.id} className="card lift">
+                          <Link href={href} className="stack" style={{ color: 'var(--text)' }}>
+                            <div className="banner" style={{ height: 84, background: banner(category.color), alignItems: 'flex-end', justifyContent: 'space-between', padding: '12px 14px' }}>
+                              <span className="display" style={{ fontSize: 32, fontWeight: 700, lineHeight: 1, color: category.color }}>{number}</span>
+                              <i className={`ph ${category.icon}`} style={{ fontSize: 24, color: category.color }} />
+                            </div>
+                            <div className="display" style={{ padding: '14px 14px 6px', fontSize: 17, fontWeight: 600 }}>{course.title}</div>
+                          </Link>
+                          <div className="row" style={{ padding: '6px 14px 14px', justifyContent: 'space-between', marginTop: 'auto' }}>
+                            <span className="faint" style={{ fontSize: 12 }}>{course.documentCount} document{course.documentCount === 1 ? '' : 's'}</span>
+                            {course.documentHref && <a href={course.documentHref} download className="icon-dl" title={`Télécharger ${course.documentTitle}`} aria-label={`Télécharger le document ${course.documentTitle}`}><i className="ph ph-download-simple" style={{ fontSize: 18 }} /></a>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
         <div className="stack" style={{ gap: 40 }}>
           {CAT_CODES.map((code, i) => {
             const C = CATS[code];
@@ -69,6 +167,7 @@ export default async function CoursesPage({ searchParams }: { searchParams: Prom
             );
           })}
         </div>
+        )
       ) : (
         <div className="stack" style={{ border: '1px dashed var(--border-strong)', borderRadius: 12, padding: '48px 24px', alignItems: 'center', gap: 12, textAlign: 'center' }}>
           <i className="ph ph-hourglass-medium" style={{ fontSize: 40, color: '#FF8A65' }} />

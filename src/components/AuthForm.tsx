@@ -13,7 +13,7 @@ export default function AuthForm({ mode, next }: { mode: 'login' | 'register'; n
         <input name="handle" className="input mono" required autoComplete="username" defaultValue={state.handle} placeholder="a_kouame" />
       </label>
       <label className="field">Mot de passe
-        <input name="password" type="password" className="input" required minLength={mode === 'register' ? 8 : undefined}
+        <input name="password" type="password" className="input" required maxLength={128} minLength={mode === 'register' ? 8 : undefined}
           autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
       </label>
       {mode === 'register' && (

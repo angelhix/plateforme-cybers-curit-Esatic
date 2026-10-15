@@ -7,7 +7,7 @@ export const metadata: Metadata = { title: 'Classement · Plateforme CTF ESATIC'
 
 export default async function BoardPage() {
   const me = await getCurrentUser();
-  const board = leaderboard();
+  const board = await leaderboard();
   // Podium : 2ᵉ à gauche, 1ᵉʳ au centre, 3ᵉ à droite.
   const podium = [board[1], board[0], board[2]].filter(Boolean);
   const rest = board.slice(3);

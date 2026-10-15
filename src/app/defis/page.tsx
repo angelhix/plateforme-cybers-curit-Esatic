@@ -20,7 +20,7 @@ export default async function ChallengesPage({ searchParams }: { searchParams: P
   const n = Number(sp.niveau), lv = isLevel(n) ? n : 0;
   const cat = sp.cat && isCat(sp.cat) ? sp.cat : 'ALL';
   const me = await getCurrentUser();
-  const all = listChallenges(me?.id ?? null);
+  const all = await listChallenges(me?.id ?? null);
   const list = all.filter(c => (!lv || c.level === lv) && (cat === 'ALL' || c.catCode === cat));
   const done = all.filter(c => c.isDone).length;
   const pct = all.length ? Math.round(done / all.length * 100) : 0;

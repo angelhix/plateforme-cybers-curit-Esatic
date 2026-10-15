@@ -16,7 +16,7 @@ export default async function Header() {
       <div className="hdr-right">
         {me ? (
           <>
-            <div className="pts-chip"><i className="ph-fill ph-lightning" />{userPoints(me.id)} pts</div>
+            <div className="pts-chip"><i className="ph-fill ph-lightning" />{await userPoints(me.id)} pts</div>
             <Link href={`/profil/${me.handle}`} className="avatar-btn" title="Mon profil">{me.initials}</Link>
           </>
         ) : (

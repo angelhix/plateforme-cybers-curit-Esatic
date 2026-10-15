@@ -6,7 +6,7 @@ import ChallengeCard from '@/components/ChallengeCard';
 
 export default async function HomePage() {
   const me = await getCurrentUser();
-  const featured = listChallenges(me?.id ?? null).filter(c => !c.isDone).slice(0, 4);
+  const featured = (await listChallenges(me?.id ?? null)).filter(c => !c.isDone).slice(0, 4);
 
   return (
     <section className="stack" style={{ gap: 56 }}>

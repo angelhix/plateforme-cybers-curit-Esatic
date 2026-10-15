@@ -1,14 +1,14 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import { getCurrentUser } from '@/lib/auth';
+import { getCurrentUser, safeNextPath } from '@/lib/auth';
 import AuthForm from '@/components/AuthForm';
 
 export const metadata: Metadata = { title: 'Connexion · Plateforme CTF ESATIC' };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ mode?: string; next?: string }> }) {
   const sp = await searchParams;
-  const next = sp.next?.startsWith('/') && !sp.next.startsWith('//') ? sp.next : '/';
+  const next = safeNextPath(sp.next);
   if (await getCurrentUser()) redirect(next);
   const mode = sp.mode === 'inscription' ? 'register' : 'login';
   const q = (m: string) => `/connexion?${new URLSearchParams({ ...(m ? { mode: m } : {}), ...(next !== '/' ? { next } : {}) })}`;

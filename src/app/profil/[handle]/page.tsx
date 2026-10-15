@@ -15,13 +15,13 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
 
 export default async function ProfilePage({ params, searchParams }: { params: Params; searchParams: Promise<{ page?: string }> }) {
   const handle = decodeURIComponent((await params).handle);
-  const board = leaderboard();
+  const board = await leaderboard();
   const P = board.find(r => r.handle === handle);
   if (!P) notFound();
   const me = await getCurrentUser();
   const isMe = me?.id === P.id;
-  const all = listChallenges(null);
-  const solved = solvedBy(P.id);
+  const all = await listChallenges(null);
+  const solved = await solvedBy(P.id);
   const ids = new Set(solved.map(c => c.id));
   const next = board[P.rank];
   const L = LEVELS[P.level];

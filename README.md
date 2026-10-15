@@ -212,8 +212,80 @@ npm run build
 
 5. Démarrer l'application :
 
+<<<<<<< HEAD
 ```bash
 npm run start
+=======
+## Limitation des tentatives
+
+Les limites sont stockées dans PostgreSQL, partagé entre les instances. Chaque compteur est incrémenté par un unique `INSERT ... ON CONFLICT DO UPDATE`, afin que les requêtes concurrentes ne puissent pas toutes lire le même ancien compteur.
+
+| Action | Limite | Fenêtre / comportement |
+|---|---:|---|
+| Connexion, par pseudo et par source réseau | 5 / 300 | 15 minutes, puis délai progressif de 1 seconde à 15 minutes |
+| Inscription, par source réseau | 20 | 1 heure |
+| Inscription, globale à la plateforme | 500 | 1 heure |
+| Soumission de flag, par joueur | 10 | 1 minute, en plus du contrôle transactionnel existant |
+| Soumission de flag, par source réseau | 60 | 1 minute |
+| Soumission de flag, par défi | 600 | 1 minute |
+
+Les compteurs ne contiennent ni mot de passe ni flag. Le pseudo, la source réseau et l’identifiant du défi sont transformés en clés HMAC avec `RATE_LIMIT_SECRET`. Si PostgreSQL, la table de limite ou la configuration d’identité réseau manque, les actions concernées échouent fermées : connexion/inscription renvoient un message générique d’indisponibilité, et la soumission affiche une indisponibilité. Les messages de connexion restent identiques pour pseudo inconnu, mot de passe erroné et limite atteinte.
+
+### IP derrière un proxy
+
+En production, l’application **ne lit pas** `X-Forwarded-For` ni `X-Real-IP`. Elle exige `x-ctf-client-ip` accompagné de `x-ctf-client-ip-signature`. Le reverse proxy de confiance doit :
+
+1. N’accepter le trafic de l’application que depuis le proxy/load balancer attendu ; bloquer l’accès direct au serveur Next.js.
+2. Déterminer l’IP cliente depuis le pair réseau ou une chaîne de proxies explicitement configurée, dont chaque saut est de confiance.
+3. Supprimer toute valeur entrante des deux en-têtes `x-ctf-client-ip` et `x-ctf-client-ip-signature`, puis les réécrire lui-même.
+4. Calculer `x-ctf-client-ip-signature` comme HMAC-SHA256 hexadécimal de la valeur exacte de `x-ctf-client-ip`, avec `RATE_LIMIT_SECRET`.
+
+Configurer `RATE_LIMIT_SECRET` avec au moins 32 caractères aléatoires dans l’application **et** dans le proxy de confiance. Ne pas le mettre dans le dépôt, les journaux ou les réponses HTTP. Les adresses IPv6 d’un même `/64` partagent un quota ; les adresses IPv4 sont comptées individuellement. Si l’hébergeur ne permet pas de signer un en-tête ou d’isoler l’origine, il faut intégrer son mécanisme d’identité client vérifié avant le déploiement ; ne pas activer une confiance aveugle dans `X-Forwarded-For`. En développement local, les actions partagent une identité de source locale.
+
+### Migration et tests
+
+Le limiteur requiert la migration `20261015120000_add_rate_limit_buckets`, qui ajoute uniquement la table des compteurs et son index. Elle n’a pas été appliquée lors de l’ajout du code. Avant tout déploiement, examiner puis autoriser l’application des migrations selon la procédure de sauvegarde habituelle. Tant qu’elle n’est pas appliquée, les actions protégées refusent de continuer au lieu de contourner le limiteur.
+
+Lancer les tests unitaires non destructifs :
+
+```bash
+npm run test:security
+```
+
+Le test concurrent PostgreSQL est ignoré par défaut. Pour le lancer, configurer `RATE_LIMIT_TEST_DATABASE_URL` vers une **base de test isolée** où cette migration est déjà appliquée : il crée et supprime uniquement des buckets préfixés par un identifiant de test aléatoire. Ne pas pointer cette variable vers la base de production ou une base contenant des données à préserver.
+
+Les lignes de limite peuvent être purgées après expiration par une tâche de maintenance dédiée ; conserver une rétention couvrant au moins les fenêtres et délais configurés, puis surveiller la taille de cette table.
+
+## Sécurité et limites connues
+
+Les pages `/admin` sont protégées par une session et par une vérification du rôle `ADMIN` côté serveur ; chaque action d’écriture admin vérifie aussi ce rôle. Connaître l’URL ne donne donc pas accès aux fonctions admin. Les URL ne sont toutefois pas « indétectables » : elles peuvent être découvertes et doivent rester protégées par l’autorisation, pas par le secret de leur chemin. Un compte admin dédié avec un mot de passe unique et long est recommandé.
+
+La plateforme utilise des requêtes Prisma paramétrées, échappe le texte rendu par React, stocke des mots de passe hachés par scrypt, protège les cookies de session (`httpOnly`, `SameSite=Lax`, `Secure` en production), et ne transmet pas les flags ni les réponses correctes de quiz au navigateur. Les Server Actions Next.js valident l’origine des requêtes. Des en-têtes HTTP de base contre le clickjacking, le MIME sniffing et les fuites de référent sont configurés ; HSTS n’est activé qu’en production.
+
+Cela ne constitue pas une certification OWASP Top 10 ni une garantie d’absence de vulnérabilité. Avant une mise en production publique, il faut encore configurer un limiteur de tentatives de connexion partagé entre instances (et correctement alimenté par l’IP depuis un proxy de confiance), une politique CSP stricte compatible avec le déploiement, TLS et les en-têtes du proxy, ainsi que sauvegardes et permissions minimales pour PostgreSQL. Les comptes de démonstration sont réservés au développement. Faire également les mises à jour de dépendances et un audit de sécurité du déploiement réel.
+
+## Architecture
+
+| Élément | Choix |
+|---|---|
+| Framework | Next.js 16 (App Router, Server Components, Server Actions) |
+| Base de données | PostgreSQL via Prisma |
+| Authentification | Pseudo + mot de passe (scrypt), session par cookie `httpOnly` (jeton stocké haché en base) |
+| Flags | Jamais envoyés au navigateur. Stockés en **HMAC-SHA256** (clé `FLAG_SECRET`), comparés en temps constant |
+| Anti-bruteforce | 10 soumissions de flag max par minute et par joueur |
+| Icônes / polices | Phosphor (paquet npm, servi localement) · Space Grotesk / IBM Plex Sans / JetBrains Mono (Google Fonts) |
+
+```
+src/
+  app/                    pages (une route par écran) + actions.ts (flag, connexion, inscription, déconnexion)
+  components/             Header, NavLinks, ChallengeCard, FlagForm, AuthForm
+  lib/catalog.ts          niveaux, catégories, cours, liens des documents (sans secret, importable côté client)
+  lib/prisma-client.ts    instance Prisma partagée
+  lib/data.ts             requêtes PostgreSQL : défis, classement, profil
+  lib/crypto.ts           hachage des flags et des mots de passe
+scripts/seed.ts           chargement des défis (et des comptes de démo)
+data/                     challenges.example.json (versionné) · challenges.json (ignoré par git)
+>>>>>>> 4242da2 (security: add PostgreSQL-backed rate limiting)
 ```
 
 Selon votre environnement d'hébergement, vous pouvez également déployer via des solutions telles que VPS, Docker, Vercel ou d'autres services compatibles Next.js.

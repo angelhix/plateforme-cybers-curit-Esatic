@@ -8,6 +8,7 @@ const MESSAGES: Partial<Record<FlagState['status'], string>> = {
   err: 'Ce n’est pas le bon flag. Réessaie.',
   rate: 'Trop d’essais. Patiente une minute avant de réessayer.',
   missing: 'Ce défi n’est plus disponible.',
+  unavailable: 'La vérification est temporairement indisponible. Réessaie plus tard.',
 };
 
 export default function FlagForm({ challengeId, loggedIn }: { challengeId: string; loggedIn: boolean }) {

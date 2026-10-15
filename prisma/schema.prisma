@@ -49,6 +49,17 @@ model Session {
   @@map("sessions")
 }
 
+model RateLimitBucket {
+  key             String    @id @db.VarChar(64)
+  count           Int
+  windowStartedAt DateTime  @map("window_started_at") @db.Timestamptz(3)
+  blockedUntil    DateTime? @map("blocked_until") @db.Timestamptz(3)
+  updatedAt       DateTime  @map("updated_at") @db.Timestamptz(3)
+
+  @@index([updatedAt])
+  @@map("rate_limit_buckets")
+}
+
 model Category {
   code       String      @id @db.VarChar(3)
   name       String

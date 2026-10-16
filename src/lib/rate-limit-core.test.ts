@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import test from 'node:test';
-import { applyRateLimits, RATE_LIMIT_POLICIES, verifyTrustedClientIp, type AtomicRateLimitStore, type RateLimitPolicy, type RateLimitResult } from './rate-limit-core';
+import {
+  applyRateLimits,
+  clientIpFromVercelHeaders,
+  createPostgresRateLimitStore,
+  RATE_LIMIT_POLICIES,
+  RateLimitUnavailableError,
+  type AtomicRateLimitStore,
+  type RateLimitPolicy,
+  type RateLimitResult,
+} from './rate-limit-core';
 
 class FakeAtomicStore implements AtomicRateLimitStore {
   private readonly buckets = new Map<string, { count: number; startedAt: number; blockedUntil: number }>();
@@ -133,17 +141,35 @@ test('fails closed when the shared store is unavailable', async () => {
   await assert.rejects(() => applyRateLimits(unavailable, [{ key: 'source', policy: { limit: 1, windowMs: 1_000 } }]));
 });
 
-test('accepts only a valid signed IP from the trusted proxy', () => {
-  const secret = crypto.randomBytes(32).toString('hex');
-  const ip = '203.0.113.42';
-  const signature = crypto.createHmac('sha256', secret).update(ip).digest('hex');
+test('accepts a single valid Vercel forwarded client IP', () => {
+  assert.equal(clientIpFromVercelHeaders(new Headers({ 'x-forwarded-for': '203.0.113.42' })), '203.0.113.42');
+  assert.equal(clientIpFromVercelHeaders(new Headers({ 'x-forwarded-for': '2001:db8:abcd:12::99' })), '2001:db8:abcd:12::/64');
+});
 
-  assert.equal(verifyTrustedClientIp(ip, signature, secret), ip);
-  assert.equal(verifyTrustedClientIp(ip, '0'.repeat(64), secret), null);
-  assert.equal(verifyTrustedClientIp('not-an-ip', signature, secret), null);
-  assert.equal(verifyTrustedClientIp(null, signature, secret), null);
-  const otherAddressInSubnet = '2001:db8:abcd:12::99';
-  const otherSignature = crypto.createHmac('sha256', secret).update(otherAddressInSubnet).digest('hex');
-  assert.equal(verifyTrustedClientIp(otherAddressInSubnet, otherSignature, secret), '2001:db8:abcd:12::/64');
-  assert.equal(verifyTrustedClientIp('2001:db8:abcd:12::1', crypto.createHmac('sha256', secret).update('2001:db8:abcd:12::1').digest('hex'), secret), '2001:db8:abcd:12::/64');
+test('rejects missing, malformed, whitespace-padded, and ambiguous forwarded IPs', () => {
+  assert.equal(clientIpFromVercelHeaders(new Headers()), null);
+  assert.equal(clientIpFromVercelHeaders(new Headers({ 'x-forwarded-for': 'not-an-ip' })), null);
+  assert.equal(clientIpFromVercelHeaders({ get: () => ' 203.0.113.42' }), null);
+  assert.equal(clientIpFromVercelHeaders(new Headers({ 'x-forwarded-for': '203.0.113.42, 198.51.100.7' })), null);
+});
+
+test('ignores client-supplied custom IP/signature headers', () => {
+  const spoofed = new Headers({
+    'x-ctf-client-ip': '203.0.113.42',
+    'x-ctf-client-ip-signature': 'a'.repeat(64),
+    'x-real-ip': '203.0.113.42',
+  });
+  assert.equal(clientIpFromVercelHeaders(spoofed), null);
+
+  spoofed.set('x-forwarded-for', '198.51.100.8, 203.0.113.42');
+  assert.equal(clientIpFromVercelHeaders(spoofed), null);
+});
+
+test('database store fails closed when its query fails or returns no row', async () => {
+  const brokenStore = createPostgresRateLimitStore(async () => { throw new Error('database unavailable'); });
+  const emptyStore = createPostgresRateLimitStore(async () => []);
+  const policy = { limit: 1, windowMs: 1_000 };
+
+  await assert.rejects(() => brokenStore.consume('key', policy), RateLimitUnavailableError);
+  await assert.rejects(() => emptyStore.consume('key', policy), RateLimitUnavailableError);
 });

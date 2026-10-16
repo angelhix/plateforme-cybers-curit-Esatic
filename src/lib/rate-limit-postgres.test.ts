@@ -4,8 +4,25 @@ import test from 'node:test';
 import type { RateLimitPolicy } from './rate-limit-core';
 
 const testDatabaseUrl = process.env.RATE_LIMIT_TEST_DATABASE_URL;
+const applicationDatabaseUrl = process.env.DATABASE_URL;
 
-test('PostgreSQL upsert enforces a shared concurrent threshold', { skip: !testDatabaseUrl }, async () => {
+function isDedicatedTestDatabase(candidate?: string, application?: string) {
+  if (!candidate) return false;
+  try {
+    const candidateUrl = new URL(candidate);
+    const databaseName = decodeURIComponent(candidateUrl.pathname.slice(1));
+    if (!/(^|[_-])test([_-]|$)/i.test(databaseName)) return false;
+    if (!application) return true;
+    const applicationUrl = new URL(application);
+    return `${candidateUrl.origin}${candidateUrl.pathname}` !== `${applicationUrl.origin}${applicationUrl.pathname}`;
+  } catch {
+    return false;
+  }
+}
+
+const dedicatedTestDatabase = isDedicatedTestDatabase(testDatabaseUrl, applicationDatabaseUrl);
+
+test('PostgreSQL upsert enforces a shared concurrent threshold', { skip: !dedicatedTestDatabase }, async () => {
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousRateLimitSecret = process.env.RATE_LIMIT_SECRET;
   process.env.DATABASE_URL = testDatabaseUrl;

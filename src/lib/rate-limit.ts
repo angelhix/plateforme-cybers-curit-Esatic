@@ -2,18 +2,18 @@ import 'server-only';
 import crypto from 'node:crypto';
 import { headers } from 'next/headers';
 import { prisma } from './prisma';
-import { applyRateLimits, RATE_LIMIT_POLICIES, verifyTrustedClientIp, type AtomicRateLimitStore, type RateLimitPolicy, type RateLimitRequest, type RateLimitResult } from './rate-limit-core';
+import {
+  applyRateLimits,
+  clientIpFromVercelHeaders,
+  createPostgresRateLimitStore,
+  RATE_LIMIT_POLICIES,
+  RateLimitUnavailableError,
+  type RateLimitPolicy,
+  type RateLimitRequest,
+} from './rate-limit-core';
 
 const DEVELOPMENT_SECRET = 'local-only-rate-limit-secret-do-not-deploy';
-const PROXY_CLIENT_IP_HEADER = 'x-ctf-client-ip';
-const PROXY_SIGNATURE_HEADER = 'x-ctf-client-ip-signature';
-
-export class RateLimitUnavailableError extends Error {
-  constructor() {
-    super('Rate limiting is unavailable.');
-    this.name = 'RateLimitUnavailableError';
-  }
-}
+export { RateLimitUnavailableError } from './rate-limit-core';
 
 function getRateLimitSecret() {
   const secret = process.env.RATE_LIMIT_SECRET;
@@ -32,21 +32,12 @@ export function rateLimitKey(scope: string, identity: string) {
 
 async function getSourceIdentity() {
   if (process.env.NODE_ENV !== 'production') return 'development-local';
-  const secret = getRateLimitSecret();
-  const requestHeaders = await headers();
-  const ip = verifyTrustedClientIp(
-    requestHeaders.get(PROXY_CLIENT_IP_HEADER),
-    requestHeaders.get(PROXY_SIGNATURE_HEADER),
-    secret,
-  );
+  const ip = clientIpFromVercelHeaders(await headers());
   if (!ip) throw new RateLimitUnavailableError();
   return ip;
 }
 
-export const postgresRateLimitStore: AtomicRateLimitStore = {
-  async consume(key, policy): Promise<RateLimitResult> {
-    try {
-      const rows = await prisma.$queryRaw<Array<{ count: number; blocked_until: Date | null; checked_at: Date }>>`
+export const postgresRateLimitStore = createPostgresRateLimitStore(async (key, policy) => prisma.$queryRaw<Array<{ count: number; blocked_until: Date | null; checked_at: Date }>>`
         INSERT INTO "rate_limit_buckets" ("key", "count", "window_started_at", "blocked_until", "updated_at")
         VALUES (${key}, 1, statement_timestamp(), NULL, statement_timestamp())
         ON CONFLICT ("key") DO UPDATE SET
@@ -74,16 +65,7 @@ export const postgresRateLimitStore: AtomicRateLimitStore = {
           END,
           "updated_at" = statement_timestamp()
         RETURNING "count", "blocked_until", statement_timestamp() AS "checked_at"
-      `;
-      const row = rows[0];
-      if (!row) throw new Error('Rate limit update did not return a row.');
-      const retryAfterMs = row.blocked_until ? Math.max(0, row.blocked_until.getTime() - row.checked_at.getTime()) : 0;
-      return { allowed: row.count <= policy.limit && retryAfterMs === 0, retryAfterMs };
-    } catch {
-      throw new RateLimitUnavailableError();
-    }
-  },
-};
+      `);
 
 async function apply(requests: RateLimitRequest[]) {
   return applyRateLimits(postgresRateLimitStore, requests);

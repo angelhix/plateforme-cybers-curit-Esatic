@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import { isIP } from 'node:net';
 
 export type RateLimitPolicy = {
@@ -31,12 +30,17 @@ export interface AtomicRateLimitStore {
   consume(key: string, policy: RateLimitPolicy): Promise<RateLimitResult>;
 }
 
-export function verifyTrustedClientIp(ip: string | null, signature: string | null, secret: string) {
-  if (!ip || !signature || !isIP(ip) || !/^[a-f0-9]{64}$/i.test(signature)) return null;
-  const expected = crypto.createHmac('sha256', secret).update(ip).digest();
-  const received = Buffer.from(signature, 'hex');
-  if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return null;
-  return networkIdentity(ip);
+export class RateLimitUnavailableError extends Error {
+  constructor() {
+    super('Rate limiting is unavailable.');
+    this.name = 'RateLimitUnavailableError';
+  }
+}
+
+export function clientIpFromVercelHeaders(requestHeaders: Pick<Headers, 'get'>) {
+  const value = requestHeaders.get('x-forwarded-for');
+  if (!value || value.includes(',') || value.trim() !== value || !isIP(value)) return null;
+  return networkIdentity(value);
 }
 
 function networkIdentity(ip: string) {
@@ -61,6 +65,25 @@ function networkIdentity(ip: string) {
     return `${first >> 8}.${first & 255}.${second >> 8}.${second & 255}`;
   }
   return `${normalized.slice(0, 4).join(':')}::/64`;
+}
+
+type RateLimitDatabaseRow = { count: number; blocked_until: Date | null; checked_at: Date };
+
+export function createPostgresRateLimitStore(
+  execute: (key: string, policy: RateLimitPolicy) => Promise<RateLimitDatabaseRow[]>,
+): AtomicRateLimitStore {
+  return {
+    async consume(key, policy): Promise<RateLimitResult> {
+      try {
+        const row = (await execute(key, policy))[0];
+        if (!row) throw new Error('Rate limit update did not return a row.');
+        const retryAfterMs = row.blocked_until ? Math.max(0, row.blocked_until.getTime() - row.checked_at.getTime()) : 0;
+        return { allowed: row.count <= policy.limit && retryAfterMs === 0, retryAfterMs };
+      } catch {
+        throw new RateLimitUnavailableError();
+      }
+    },
+  };
 }
 
 export async function applyRateLimits(

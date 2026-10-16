@@ -231,16 +231,13 @@ Les limites sont stockées dans PostgreSQL, partagé entre les instances. Chaque
 
 Les compteurs ne contiennent ni mot de passe ni flag. Le pseudo, la source réseau et l’identifiant du défi sont transformés en clés HMAC avec `RATE_LIMIT_SECRET`. Si PostgreSQL, la table de limite ou la configuration d’identité réseau manque, les actions concernées échouent fermées : connexion/inscription renvoient un message générique d’indisponibilité, et la soumission affiche une indisponibilité. Les messages de connexion restent identiques pour pseudo inconnu, mot de passe erroné et limite atteinte.
 
-### IP derrière un proxy
+### Adresse IP cliente sur Vercel
 
-En production, l’application **ne lit pas** `X-Forwarded-For` ni `X-Real-IP`. Elle exige `x-ctf-client-ip` accompagné de `x-ctf-client-ip-signature`. Le reverse proxy de confiance doit :
+Sur un déploiement Vercel standard sans proxy externe, le limiteur lit `X-Forwarded-For`. Vercel documente cet en-tête comme l’adresse IP publique du client et indique qu’il remplace toute valeur entrante afin d’empêcher l’usurpation. L’application n’utilise pas `x-ctf-client-ip`, `x-ctf-client-ip-signature` ni `X-Real-IP` et ne fabrique aucune signature d’IP. Elle accepte uniquement une valeur constituant une adresse IP unique et valide ; une valeur absente, mal formée ou contenant une liste est refusée (fail-closed).
 
-1. N’accepter le trafic de l’application que depuis le proxy/load balancer attendu ; bloquer l’accès direct au serveur Next.js.
-2. Déterminer l’IP cliente depuis le pair réseau ou une chaîne de proxies explicitement configurée, dont chaque saut est de confiance.
-3. Supprimer toute valeur entrante des deux en-têtes `x-ctf-client-ip` et `x-ctf-client-ip-signature`, puis les réécrire lui-même.
-4. Calculer `x-ctf-client-ip-signature` comme HMAC-SHA256 hexadécimal de la valeur exacte de `x-ctf-client-ip`, avec `RATE_LIMIT_SECRET`.
+Cette hypothèse vaut pour l’accès direct à Vercel. Si un proxy externe précède Vercel, Vercel indique qu’il peut remplacer `X-Forwarded-For` sans transmettre l’IP externe ; la valeur observée peut alors être celle du proxy. L’IP réelle de l’utilisateur ne doit pas être reconstruite en choisissant un élément de liste. Il faut configurer un proxy de confiance pris en charge par Vercel (la fonctionnalité Trusted Proxy est réservée à Enterprise) ou déplacer l’identification et le rate limiting à la couche d’entrée de confiance. Sans cette configuration, le limiteur échoue fermé si Vercel ne fournit pas une adresse unique.
 
-Configurer `RATE_LIMIT_SECRET` avec au moins 32 caractères aléatoires dans l’application **et** dans le proxy de confiance. Ne pas le mettre dans le dépôt, les journaux ou les réponses HTTP. Les adresses IPv6 d’un même `/64` partagent un quota ; les adresses IPv4 sont comptées individuellement. Si l’hébergeur ne permet pas de signer un en-tête ou d’isoler l’origine, il faut intégrer son mécanisme d’identité client vérifié avant le déploiement ; ne pas activer une confiance aveugle dans `X-Forwarded-For`. En développement local, les actions partagent une identité de source locale.
+`RATE_LIMIT_SECRET` reste requis en production pour le HMAC des clés pseudonymisées du limiteur PostgreSQL ; il n’est pas partagé avec un proxy. Les adresses IPv6 d’un même `/64` partagent un quota et les IPv4 sont comptées individuellement. En développement local, les actions partagent une identité de source locale.
 
 ### Migration et tests
 
@@ -262,7 +259,7 @@ Les pages `/admin` sont protégées par une session et par une vérification du 
 
 La plateforme utilise des requêtes Prisma paramétrées, échappe le texte rendu par React, stocke des mots de passe hachés par scrypt, protège les cookies de session (`httpOnly`, `SameSite=Lax`, `Secure` en production), et ne transmet pas les flags ni les réponses correctes de quiz au navigateur. Les Server Actions Next.js valident l’origine des requêtes. Des en-têtes HTTP de base contre le clickjacking, le MIME sniffing et les fuites de référent sont configurés ; HSTS n’est activé qu’en production.
 
-Cela ne constitue pas une certification OWASP Top 10 ni une garantie d’absence de vulnérabilité. Avant une mise en production publique, il faut encore configurer un limiteur de tentatives de connexion partagé entre instances (et correctement alimenté par l’IP depuis un proxy de confiance), une politique CSP stricte compatible avec le déploiement, TLS et les en-têtes du proxy, ainsi que sauvegardes et permissions minimales pour PostgreSQL. Les comptes de démonstration sont réservés au développement. Faire également les mises à jour de dépendances et un audit de sécurité du déploiement réel.
+Cela ne constitue pas une certification OWASP Top 10 ni une garantie d’absence de vulnérabilité. Avant une mise en production publique, vérifier que le déploiement Vercel est direct ou configurer un proxy de confiance compatible, tester la présence d’une IP unique dans `X-Forwarded-For`, ajouter une politique CSP stricte compatible avec le déploiement, et vérifier TLS, les en-têtes, les sauvegardes et les permissions minimales PostgreSQL. Les comptes de démonstration sont réservés au développement. Faire également les mises à jour de dépendances et un audit de sécurité du déploiement réel.
 
 ## Architecture
 

@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { checkFlag, hashPassword, initialsOf, verifyPassword } from '@/lib/crypto';
 import { createSession, destroySession, getCurrentUser, safeNextPath } from '@/lib/auth';
+import { isValidHandle, isValidPassword, MAX_PASSWORD_LENGTH, normalizeHandle } from '@/lib/account-validation';
 import {
   consumeFlagLimits,
   consumeLoginLimits,
@@ -81,8 +82,6 @@ export async function submitFlag(challengeId: string, _prev: FlagState, form: Fo
 
 export type AuthState = { error?: string; handle?: string };
 
-const HANDLE_RE = /^[a-z0-9][a-z0-9._-]{2,19}$/;
-const MAX_PASSWORD_LENGTH = 128;
 let dummyPasswordHash: string | undefined;
 
 function verifyLoginPassword(password: string, passwordHash?: string) {
@@ -129,11 +128,11 @@ export async function login(_prev: AuthState, form: FormData): Promise<AuthState
 }
 
 export async function register(_prev: AuthState, form: FormData): Promise<AuthState> {
-  const handle = String(form.get('handle') ?? '').trim().toLowerCase();
+  const handle = normalizeHandle(String(form.get('handle') ?? ''));
   const password = String(form.get('password') ?? '');
   const level = Number(form.get('level'));
-  if (!HANDLE_RE.test(handle)) return { error: 'Pseudo : 3 à 20 caractères, lettres minuscules, chiffres, « . », « _ » ou « - ».', handle };
-  if (password.length < 8 || password.length > MAX_PASSWORD_LENGTH) return { error: 'Le mot de passe doit contenir entre 8 et 128 caractères.', handle };
+  if (!isValidHandle(handle)) return { error: 'Pseudo : 3 à 20 caractères, lettres minuscules, chiffres, « . », « _ » ou « - ».', handle };
+  if (!isValidPassword(password)) return { error: 'Le mot de passe doit contenir entre 8 et 128 caractères.', handle };
   if (![1, 2, 3].includes(level)) return { error: 'Choisis ton niveau.', handle };
 
   try {

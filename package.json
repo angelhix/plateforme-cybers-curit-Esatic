@@ -11,8 +11,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test:security": "node --import=tsx --test src/lib/rate-limit-core.test.ts src/lib/rate-limit-postgres.test.ts",
-    "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import=tsx scripts/seed.ts"
+    "test:security": "node --import=tsx --test src/lib/rate-limit-core.test.ts src/lib/rate-limit-postgres.test.ts scripts/admin-only-seed.test.ts",
+    "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import=tsx scripts/seed.ts",
+    "db:seed:admin": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import=tsx scripts/seed.ts --admin-only"
   },
   "dependencies": {
     "@phosphor-icons/web": "^2.1.1",

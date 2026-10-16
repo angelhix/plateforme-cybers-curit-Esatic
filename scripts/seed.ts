@@ -7,9 +7,11 @@ import path from 'node:path';
 import { prisma } from '../src/lib/prisma-client.ts';
 import { hashFlag, hashPassword, initialsOf } from '../src/lib/crypto.ts';
 import { CAT_CODES, CATS, isCat, type CatCode } from '../src/lib/catalog.ts';
+import { dispatchSeedMode, runAdminOnlySeed } from './admin-only-seed.ts';
 
 type Seed = { id: string; title: string; category: string; level: number; points: number; description: string; goal: string; cmd: string; output: string; flag: string; published?: boolean };
 
+async function runFullSeed() {
 if (!process.env.FLAG_SECRET) {
   console.warn('⚠ FLAG_SECRET absent : flags hachés avec le secret de développement. `npm start` les refusera — définis FLAG_SECRET dans .env puis relance le seed.');
 }
@@ -44,7 +46,7 @@ if (!Number.isInteger(adminLevel) || ![1, 2, 3].includes(adminLevel)) {
   throw new Error('ADMIN_LEVEL doit être 1, 2 ou 3.');
 }
 
-try {
+{
   await prisma.$transaction(async tx => {
     await tx.category.createMany({
       data: categoryCodes.map(code => ({
@@ -200,6 +202,27 @@ try {
   }
 
   console.log('Seed PostgreSQL terminé.');
-} finally {
-  await prisma.$disconnect();
 }
+}
+
+async function main() {
+  try {
+    await dispatchSeedMode(
+      process.argv.slice(2),
+      async () => {
+        const result = await runAdminOnlySeed(prisma, {
+          ADMIN_HANDLE: process.env.ADMIN_HANDLE,
+          ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+          ADMIN_LEVEL: process.env.ADMIN_LEVEL,
+        });
+        console.log(`Compte administrateur créé ou mis à jour : ${result.handle}.`);
+        console.log(`Catégories vérifiées : ${result.categoryCount}.`);
+      },
+      runFullSeed,
+    );
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+await main();

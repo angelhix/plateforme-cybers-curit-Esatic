@@ -1,6 +1,7 @@
 import 'server-only';
 import { prisma } from './prisma';
-import { CATS, LEVELS, banner, courseForCategory, levelLabel, type CatCode, type Level } from './catalog';
+import { CATS, LEVELS, banner, levelLabel, type CatCode, type Level } from './catalog';
+import { courseLinkForCategory } from './course-links';
 
 export type Status = 'done' | 'progress' | 'todo';
 export const STATUS: Record<Status, { label: string; color: string; icon: string }> = {
@@ -16,10 +17,9 @@ type Row = {
 
 export type Challenge = ReturnType<typeof decorate>;
 
-function decorate(r: Row) {
+function decorate(r: Row, course: ReturnType<typeof courseLinkForCategory>) {
   const C = CATS[r.category], L = LEVELS[r.level];
   const st: Status = r.solved ? 'done' : r.tried ? 'progress' : 'todo';
-  const course = courseForCategory(r.level, r.category);
   return {
     id: r.id, title: r.title, catCode: r.category, catName: C.name, catIcon: C.icon, catColor: C.color,
     level: r.level, lvName: L.name, lvColor: L.color, lvLabel: levelLabel(r.level), pts: r.points, solves: r.solves,
@@ -67,7 +67,20 @@ export async function listChallenges(uid: number | null): Promise<Challenge[]> {
     where: { published: true },
     select: challengeSelect(uid ?? -1),
   });
-  return rows.map(challengeRow).sort((a, b) => compareBinary(a.id, b.id)).map(decorate);
+  const challenges = rows.map(challengeRow).sort((a, b) => compareBinary(a.id, b.id));
+  const categories = [...new Map(challenges.map(challenge => [`${challenge.level}:${challenge.category}`, {
+    level: challenge.level,
+    categoryCode: challenge.category,
+  }])).values()];
+  const courses = categories.length ? await prisma.course.findMany({
+    where: { published: true, OR: categories },
+    select: { level: true, position: true, title: true, categoryCode: true },
+    orderBy: [{ position: 'asc' }, { id: 'asc' }],
+  }) : [];
+  return challenges.map(challenge => decorate(
+    challenge,
+    courseLinkForCategory(courses, challenge.level, challenge.category),
+  ));
 }
 
 export async function getChallenge(id: string, uid: number | null): Promise<Challenge | null> {
@@ -75,7 +88,14 @@ export async function getChallenge(id: string, uid: number | null): Promise<Chal
     where: { id, published: true },
     select: challengeSelect(uid ?? -1),
   });
-  return row ? decorate(challengeRow(row)) : null;
+  if (!row) return null;
+  const challenge = challengeRow(row);
+  const course = await prisma.course.findFirst({
+    where: { level: challenge.level, categoryCode: challenge.category, published: true },
+    select: { level: true, position: true, title: true, categoryCode: true },
+    orderBy: [{ position: 'asc' }, { id: 'asc' }],
+  });
+  return decorate(challenge, course ? courseLinkForCategory([course], challenge.level, challenge.category) : null);
 }
 
 export type BoardEntry = {

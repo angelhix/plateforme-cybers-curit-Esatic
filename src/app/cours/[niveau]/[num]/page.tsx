@@ -3,17 +3,12 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { getCurrentUser } from '@/lib/auth';
 import { listChallenges } from '@/lib/data';
-import { COURSES_PER_LEVEL, banner, docHref, getCourse, isLevel, type Level } from '@/lib/catalog';
+import { banner, isLevel, type Level } from '@/lib/catalog';
 import { prisma } from '@/lib/prisma';
 import { completeArticleStep, submitCourseQuiz } from '../../actions';
 
 type Params = Promise<{ niveau: string; num: string }>;
 type CoursePageProps = { params: Params; searchParams: Promise<{ result?: string }> };
-
-function resolve(niveau: string, num: string) {
-  const n = Number(niveau);
-  return isLevel(n) ? getCourse(n, Number(num) - 1) : null;
-}
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
   const { niveau, num } = await params;
@@ -22,14 +17,8 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     const course = await prisma.course.findFirst({ where: { level, position, published: true }, select: { title: true } });
     if (course) return { title: `${course.title} · Cours · Plateforme CTF ESATIC` };
   }
-  const c = resolve(niveau, num);
-  return { title: c ? `${c.title} · Cours · Plateforme CTF ESATIC` : 'Cours introuvable' };
+  return { title: 'Cours introuvable' };
 }
-
-const DOCS = [
-  { label: 'Document préparatoire', sub: 'À lire avant de pratiquer · théorie et exemples', icon: 'ph-book-open-text', kind: 'Preparatoire' },
-  { label: 'Travaux pratiques', sub: 'Exercices guidés sur le lab', icon: 'ph-terminal-window', kind: 'Pratique' },
-] as const;
 
 export default async function CoursePage({ params, searchParams }: CoursePageProps) {
   const [{ niveau, num }, query] = await Promise.all([params, searchParams]);
@@ -70,25 +59,35 @@ export default async function CoursePage({ params, searchParams }: CoursePagePro
       },
     })
     : null;
-  const catalogueCourse = resolve(niveau, num);
-  if (!databaseCourse && !catalogueCourse) notFound();
-  const cur = databaseCourse ? {
+  if (!databaseCourse) notFound();
+  const cur = {
     level: databaseCourse.level as Level,
-    k: databaseCourse.position - 1,
     num: String(databaseCourse.position).padStart(2, '0'),
     title: databaseCourse.title,
-    part: 1,
     catCode: databaseCourse.categoryCode,
     catIcon: databaseCourse.category.icon,
     catColor: databaseCourse.category.color,
     levelName: `Niveau ${databaseCourse.level}`,
     href: `/cours/${databaseCourse.level}/${String(databaseCourse.position).padStart(2, '0')}`,
-  } : catalogueCourse!;
+  };
   const lvl = cur.level as Level;
   const me = await getCurrentUser();
   const related = (await listChallenges(me?.id ?? null)).filter(c => c.catCode === cur.catCode && c.level === lvl);
-  const prev = getCourse(lvl, cur.k - 1), next = cur.k < COURSES_PER_LEVEL - 1 ? getCourse(lvl, cur.k + 1) : null;
-  const completedSteps = databaseCourse && me
+  const [prevCourse, nextCourse] = await Promise.all([
+    prisma.course.findFirst({
+      where: { level, position: { lt: position }, published: true },
+      orderBy: [{ position: 'desc' }, { id: 'desc' }],
+      select: { position: true, title: true },
+    }),
+    prisma.course.findFirst({
+      where: { level, position: { gt: position }, published: true },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      select: { position: true, title: true },
+    }),
+  ]);
+  const prev = prevCourse && { ...prevCourse, href: `/cours/${level}/${String(prevCourse.position).padStart(2, '0')}` };
+  const next = nextCourse && { ...nextCourse, href: `/cours/${level}/${String(nextCourse.position).padStart(2, '0')}` };
+  const completedSteps = me
     ? new Set((await prisma.courseStepProgress.findMany({ where: { userId: me.id, step: { courseId: databaseCourse.id } }, select: { stepId: true } })).map(progress => progress.stepId))
     : new Set<string>();
 
@@ -99,7 +98,7 @@ export default async function CoursePage({ params, searchParams }: CoursePagePro
         <div className="row" style={{ gap: 20, flexWrap: 'wrap' }}>
           <div className="hero-icon" style={{ width: 72, height: 72 }}><i className={`ph ${cur.catIcon}`} style={{ fontSize: 38, color: cur.catColor }} /></div>
           <div className="stack" style={{ gap: 6 }}>
-            <span className="mono" style={{ fontSize: 12, letterSpacing: '.1em', color: cur.catColor }}>COURS {cur.num} · PARTIE {cur.part} · {cur.catCode}</span>
+            <span className="mono" style={{ fontSize: 12, letterSpacing: '.1em', color: cur.catColor }}>COURS {cur.num} · {cur.catCode}</span>
             <h1 className="h1" style={{ lineHeight: 1.1 }}>{cur.title}</h1>
           </div>
         </div>
@@ -108,7 +107,7 @@ export default async function CoursePage({ params, searchParams }: CoursePagePro
       <div className="split">
         <div className="stack" style={{ gap: 16 }}>
           <h2 className="h3">Documents</h2>
-          {databaseCourse ? databaseCourse.documents.map(document => {
+          {databaseCourse.documents.length ? databaseCourse.documents.map(document => {
             const href = `/${document.storageKey.split('/').map(encodeURIComponent).join('/')}`;
             return (
               <div key={document.id} className="row" style={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', padding: 20, gap: 16, flexWrap: 'wrap' }}>
@@ -124,26 +123,7 @@ export default async function CoursePage({ params, searchParams }: CoursePagePro
                 </a>
               </div>
             );
-          }) : DOCS.map(d => (
-            <div key={d.kind} className="row" style={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', padding: 20, gap: 16, flexWrap: 'wrap' }}>
-              <div style={{ width: 48, height: 48, borderRadius: 10, background: 'var(--surface-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <i className={`ph ${d.icon}`} style={{ fontSize: 24, color: 'var(--cyan)' }} />
-              </div>
-              <div className="stack" style={{ flex: 1, minWidth: 180, gap: 2 }}>
-                <span className="display" style={{ fontSize: 18, fontWeight: 600 }}>{d.label}</span>
-                <span className="muted" style={{ fontSize: 14 }}>{d.sub}</span>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <a href={docHref(lvl, cur.k, d.kind, 'dc.html')} target="_blank" rel="noopener" className="btn btn-outline" style={{ height: 44, padding: '0 16px', fontSize: 14, fontWeight: 500 }}>
-                  <i className="ph ph-book-open" style={{ fontSize: 18 }} />Lire
-                </a>
-                <a href={docHref(lvl, cur.k, d.kind, 'pdf')} download className="btn btn-primary" style={{ height: 44, padding: '0 16px', fontSize: 14 }}>
-                  <i className="ph ph-file-pdf" style={{ fontSize: 18 }} />PDF
-                </a>
-              </div>
-            </div>
-          ))}
-          {databaseCourse && !databaseCourse.documents.length && <div className="faint" style={{ fontSize: 14 }}>Aucun document n’est encore associé à ce cours.</div>}
+          }) : <div className="faint" style={{ fontSize: 14 }}>Aucun document n’est encore associé à ce cours.</div>}
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 8 }}>
             {prev ? <Link href={prev.href} className="pager-link"><i className="ph ph-arrow-left" />{prev.title}</Link> : <span />}
             {next ? <Link href={next.href} className="pager-link">{next.title}<i className="ph ph-arrow-right" /></Link> : <span />}
@@ -168,7 +148,7 @@ export default async function CoursePage({ params, searchParams }: CoursePagePro
         </div>
       </div>
 
-      {databaseCourse && databaseCourse.steps.length > 0 && (
+      {databaseCourse.steps.length > 0 && (
         <section className="stack" style={{ gap: 16 }}>
           <h2 className="h3">Étapes du cours</h2>
           {query.result === 'quiz-correct' && <div className="row" role="status" style={{ border: '1px solid var(--green)', borderRadius: 8, padding: 12, color: 'var(--green)' }}>Toutes les réponses sont correctes. Étape terminée.</div>}

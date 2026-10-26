@@ -11,6 +11,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
+    "db:courses:preview": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import=tsx scripts/import-demo-courses.ts",
+    "db:courses:import": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import=tsx scripts/import-demo-courses.ts --apply",
+    "test:courses": "node --import=tsx --test src/lib/course-import.test.ts src/lib/course-links.test.ts",
     "test:security": "node --import=tsx --test src/lib/rate-limit-core.test.ts src/lib/rate-limit-postgres.test.ts scripts/admin-only-seed.test.ts",
     "db:seed": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import=tsx scripts/seed.ts",
     "db:seed:admin": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import=tsx scripts/seed.ts --admin-only"
